@@ -73,6 +73,7 @@ void addbinding(py::class_<Geocode<T, T_grid>>& pyGeocode)
                     py::arg("flag_az_baseband_doppler") = false,
                     py::arg("flatten") = false,
                     py::arg("geogrid_upsampling") = 1,
+                    py::arg("fill_value") = std::numeric_limits<double>::quiet_NaN(),
                     py::arg("flag_upsample_radar_grid") = false,
                     py::arg("flag_apply_rtc") = false,
                     py::arg("input_terrain_radiometry") =
@@ -107,6 +108,7 @@ void addbinding(py::class_<Geocode<T, T_grid>>& pyGeocode)
                     py::arg("slant_range_correction") = isce3::core::LUT2d<double>(),
                     py::arg("input_rtc") = nullptr,
                     py::arg("output_rtc") = nullptr,
+                    py::arg("output_rtc_sigma") = nullptr,
                     py::arg("input_layover_shadow_mask_raster") = nullptr,
                     py::arg("sub_swaths") = nullptr,
                     py::arg("apply_valid_samples_sub_swath_masking") = std::nullopt,
@@ -161,6 +163,19 @@ void addbinding(py::class_<Geocode<T, T_grid>>& pyGeocode)
                         Flatten the geocoded SLC
                     geogrid_upsampling: int, optional
                         Geogrid upsampling
+                    fill_value: float, optional
+                        Fill value. Defaults to NaN. The fill value will be
+                        cast to the GDAL data type of `output_raster` and
+                        `out_off_diag_terms` (when provided). If the output
+                        data type is integer and the fill value is NaN, the
+                        fill value will be stored as 0 in the output.
+                        If the output data type is complex (e.g., for
+                        off-diagonal terms) and the fill value is NaN, the
+                        fill value will be stored as NaN + NaN.j to match
+                        the NISAR specifications document. Otherwise,
+                        if the output data type is complex and the fill
+                        value is not NaN, the fill value will be used as
+                        the real part, with the imaginary part set to 0.
                     flag_upsample_radar_grid: bool, optional
                         Double the radar grid sampling rate
                     flag_apply_rtc: bool, optional
@@ -176,9 +191,9 @@ void addbinding(py::class_<Geocode<T, T_grid>>& pyGeocode)
                     rtc_min_value_db: float, optional
                         Minimum value for the RTC area factor. Radar data with
                         RTC area factor below this limit will be set to NaN.
-                    rtc_geogrid_upsampling: int, optional
+                    rtc_upsampling: int, optional
                         Geogrid upsampling to compute the radiometric terrain
-                        correction RTC.
+                        correction (RTC).
                     rtc_algorithm: isce3.geometry.RtcAlgorithm, optional
                         RTC algorithm
                     rtc_factor_area_mode : isce3.geometry.RtcAreaBetaMode, optional
@@ -246,6 +261,8 @@ void addbinding(py::class_<Geocode<T, T_grid>>& pyGeocode)
                         that of the `input_raster` (e.g., beta0). These values
                         are only computed if `flag_apply_rtc` is `true`
                         and `input_rtc` is not provided.
+                    output_rtc_sigma: isce3.io.Raster, optional
+                        Output RTC area factor to sigma-0 (in slant-range)
                     input_layover_shadow_mask_raster: isce3.io.Raster, optional
                         Input layover/shadow mask raster (in radar geometry).
                         Samples identified as SHADOW or LAYOVER_AND_SHADOW are

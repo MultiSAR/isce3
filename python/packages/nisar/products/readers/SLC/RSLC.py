@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from functools import cached_property
 import h5py
 import journal
 import logging
@@ -8,6 +9,7 @@ import pyre
 import re
 import numpy as np
 
+import isce3
 from nisar.noise import NoiseEquivalentBackscatterProduct
 from isce3.core import DateTime
 from isce3.core.types import ComplexFloat16Decoder, is_complex32
@@ -118,6 +120,63 @@ class RSLC(SLCBase, family='nisar.productreader.rslc'):
                 raise LookupError(err_str)
 
             return is_complex32(h[slc_path])
+
+    def getRadiometricCalibrationLUT(self, lut_name, frequency=None):
+        '''
+        Extract a geometry look-up table (LUT)
+
+        Parameters
+        ----------
+        lut_name: isce3.focus.calibration_luts.AreaConvention
+            Area normalization convention of table to retrieve.
+        frequency : "A" or "B" or None, optional
+            The frequency letter, either "A" or "B". 
+            Default is the first available frequency in
+            lexicographical order.
+
+        Returns
+        -------
+        radiometric_calibration_lut: isce3.core.LUT2d
+            Radiometric calibration LUT.
+
+        '''
+        if frequency is None:
+            frequency = self._getFirstFrequency()
+
+        geometry_group_path = f'{self.CalibrationInformationPath}/geometry'
+        radiometric_calibration_lut_path = f'{geometry_group_path}/{lut_name}'
+
+        # First, we look for the coordinate vectors `zeroDopplerTime`
+        # and `slantRange` in `geometry` group.
+        # If these vectors are not found, we look for the coordinate
+        # vectors in the previous level, following old RSLC specs.
+        zero_doppler_time_dataset_path = (f'{geometry_group_path}/'
+                                          'zeroDopplerTime')
+        slant_range_dataset_path = f'{geometry_group_path}/slantRange'
+
+        zero_doppler_time_dataset_path_other = \
+            f'{self.CalibrationInformationPath}/zeroDopplerTime'
+        slant_range_dataset_path_other = (f'{self.CalibrationInformationPath}/'
+                                          'slantRange')
+
+        # extract the native Doppler dataset
+        with h5py.File(self.filename, 'r', libver='latest', swmr=True) as fid:
+            if zero_doppler_time_dataset_path not in fid:
+                zero_doppler_time_dataset_path = \
+                    zero_doppler_time_dataset_path_other
+            if slant_range_dataset_path not in fid:
+                slant_range_dataset_path = \
+                    slant_range_dataset_path_other
+
+            rad_cal_data = fid[radiometric_calibration_lut_path][:]
+            zeroDopplerTime = fid[zero_doppler_time_dataset_path][:]
+            slantRange = fid[slant_range_dataset_path][:]
+
+        radiometric_calibration_lut = isce3.core.LUT2d(xcoord=slantRange,
+                                                       ycoord=zeroDopplerTime,
+                                                       data=rad_cal_data)
+
+        return radiometric_calibration_lut
 
     def getNoiseEquivalentBackscatter(self, frequency=None, pol=None):
         '''
@@ -329,6 +388,51 @@ class RSLC(SLCBase, family='nisar.productreader.rslc'):
             noise_product.ref_epoch,
             noise_product.freq_band,
             noise_product.txrx_pol)
+
+
+    @cached_property
+    def rangeChirpWeighting(self):
+        """
+        Get the range spectral weights.
+
+        Returns
+        -------
+        values : numpy.ndarray
+            Expected shape of amplitude spectrum in range.  Typically 256
+            frequency bins, shifted so that the carrier frequency is in the
+            middle.
+        name : str
+            Name of the weighting function.
+        shape : float
+            Shape parameter of the window function.
+        """
+        path = _h5join(self.ProcessingInformationPath, "parameters",
+            "rangeChirpWeighting")
+        with h5py.File(self.filename, 'r', libver='latest', swmr=True) as h5:
+            dset = h5[path]
+            name = dset.attrs["window_name"].decode()
+            shape = float(dset.attrs["window_shape"])
+            values = dset[:]
+        return values, name, shape
+
+
+    @cached_property
+    def azimuthChirpWeighting(self):
+        """
+        Get the azimuth spectral weights (antenna pattern).
+
+        Returns
+        -------
+        values : numpy.ndarray
+            Expected shape of amplitude spectrum in azimuth.  Typically 256
+            frequency bins, shifted so that the Doppler centroid is in the
+            middle.
+        """
+        path = _h5join(self.ProcessingInformationPath, "parameters",
+            "azimuthChirpWeighting")
+        with h5py.File(self.filename, 'r', libver='latest', swmr=True) as h5:
+            values = h5[path][:]
+        return values
 
 
 def _h5join(*paths: str) -> str:

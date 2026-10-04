@@ -177,19 +177,24 @@ class RunConfig:
 
         # if freq_pols is empty, process all frequencies and polarizations
         if freq_pols is None:
+
+            freq_pols_from_rslc = {}
+            for freq, pol_list in slc.polarizations.items():
+                freq_pols_from_rslc[freq] = sorted(pol_list)
             self.cfg['processing']['input_subset']['list_of_frequencies'] = \
-                slc.polarizations
+                freq_pols_from_rslc
             return
 
         # otherwise, check contents of freq_pols
         for freq in freq_pols.keys():
             if freq not in slc.frequencies:
-                err_str = f"Frequency {freq} invalid; not found in source frequencies."
+                err_str = (f'Requested frequency {freq} not found in input'
+                           ' product.')
                 error_channel.log(err_str)
                 raise ValueError(err_str)
 
             # first check polarizations from source hdf5
-            rslc_pols = slc.polarizations[freq]
+            rslc_pols = sorted(slc.polarizations[freq])
             # use all RSLC polarizations if None provided
             if freq_pols[freq] is None:
                 freq_pols[freq] = rslc_pols
@@ -199,7 +204,8 @@ class RunConfig:
             # check if user provided polarizations match RSLC ones
             for usr_pol in freq_pols[freq]:
                 if usr_pol not in rslc_pols:
-                    err_str = f"{usr_pol} invalid; not found in source polarizations."
+                    err_str = (f'Requested polarization {usr_pol}'
+                               ' not found in input product.')
                     error_channel.log(err_str)
                     raise ValueError(err_str)
 
@@ -214,7 +220,14 @@ class RunConfig:
             orbit_path = self.cfg['dynamic_ancillary_file_group']['orbit_file']
         freq_pols = self.cfg['processing']['input_subset']['list_of_frequencies']
         tec_path = self.cfg['dynamic_ancillary_file_group']['tec_file']
-        
+
+        # Check if TEC file exists in the path provided
+        if tec_path and not os.path.isfile(tec_path):
+            error_channel = journal.error('RunConfig.check_temporal_coverage')
+            err_str = f'TEC file not found: {tec_path}'
+            error_channel.log(err_str)
+            raise FileNotFoundError(err_str)
+
         slc = SLC(hdf5file=input_path)
 
         if orbit_path is not None:

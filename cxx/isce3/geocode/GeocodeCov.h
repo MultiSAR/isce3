@@ -78,6 +78,16 @@ public:
      * baseband (using Doppler centroid) before interpolation
      * @param[in]  flatten             Flatten the geocoded SLC
      * @param[in]  geogrid_upsampling  Geogrid upsampling
+     * @param[in]  fill_value          Fill value. Defaults to NaN.
+     * The fill value will be cast to the GDAL data type of `output_raster` and
+     * `out_off_diag_terms` (when provided). If the output data type is
+     * integer and the fill value is NaN, the fill value will be stored as 0 in
+     * the output. If the output data type is complex (e.g., for off-diagonal
+     * terms) and the fill value is NaN, the fill value will be stored as
+     * NaN + NaN.j to match the NISAR specifications document. Otherwise,
+     * if the output data type is complex and the fill value is not NaN,
+     * the fill value will be used as the real part, with the imaginary part
+     * set to 0.
      * @param[in]  flag_upsample_radar_grid Double the radar grid sampling rate
      * @param[in]  flag_apply_rtc      Apply radiometric terrain correction
      * (RTC)
@@ -140,6 +150,8 @@ public:
      * the `output_raster` (e.g., gamma0) to that of the `input_raster` (e.g.,
      * beta0). These values are only computed if `flag_apply_rtc` is `true`
      * and `input_rtc` is not provided.
+     * @param[out] output_rtc_sigma    Output RTC area factor to sigma-0
+     * (in slant-range geometry).
      * @param[in]  input_layover_shadow_mask_raster Input layover/shadow mask raster
      * (in radar geometry). Samples identified as SHADOW or LAYOVER_AND_SHADOW are
      * considered invalid.
@@ -161,6 +173,7 @@ public:
             geocodeOutputMode output_mode = geocodeOutputMode::INTERP,
             bool flag_az_baseband_doppler = false, bool flatten = false,
             double geogrid_upsampling = 1,
+            double fill_value = std::numeric_limits<double>::quiet_NaN(),
             bool flag_upsample_radar_grid = false, bool flag_apply_rtc = false,
             isce3::geometry::rtcInputTerrainRadiometry
                     input_terrain_radiometry = isce3::geometry::
@@ -192,6 +205,7 @@ public:
             const isce3::core::LUT2d<double>& slant_range_correction = {},
             isce3::io::Raster* input_rtc = nullptr,
             isce3::io::Raster* output_rtc = nullptr,
+            isce3::io::Raster* output_rtc_sigma = nullptr,
             isce3::io::Raster* input_layover_shadow_mask_raster = nullptr,
             isce3::product::SubSwaths* sub_swaths = nullptr,
             std::optional<bool> apply_valid_samples_sub_swath_masking = std::nullopt,
@@ -232,6 +246,18 @@ public:
      * `abs_cal_factor parameters`, which default to `false` and `1`,
      * respectively.
      * @param[in]  dem_raster          Input DEM raster
+     * @param[in]  fill_value          Fill value. Defaults to NaN.
+     * The fill value will be cast to the GDAL data type of `output_raster` and
+     * `out_off_diag_terms` (when provided). If the output data type is
+     * integer and the fill value is NaN, the fill value will be stored as 0 in
+     * the output. If the output data type is complex (e.g., for off-diagonal
+     * terms) and the fill value is NaN, the fill value will be stored as
+     * NaN + NaN.j to match the NISAR specifications document. Otherwise,
+     * if the output data type is complex and the fill value is not NaN,
+     * the fill value will be used as the real part, with the imaginary part
+     * set to 0.
+     * @param[in]  flag_apply_rtc      Apply radiometric terrain correction
+     * (RTC)
      * @param[in]  flag_az_baseband_doppler Shift SLC azimuth spectrum to
      * baseband (using Doppler centroid) before interpolation
      * @param[in]  input_terrain_radiometry  Input terrain radiometry
@@ -282,6 +308,8 @@ public:
      * the `output_raster` (e.g., gamma0) to that of the `input_raster` (e.g.,
      * beta0). These values are only computed if `flag_apply_rtc` is `true`
      * and `input_rtc` is not provided.
+     * @param[out] output_rtc_sigma    Output RTC area factor to sigma-0
+     * (in slant-range geometry).
      * @param[in]  input_layover_shadow_mask_raster Input layover/shadow mask raster
      * (in radar geometry). Samples identified as SHADOW or LAYOVER_AND_SHADOW are
      * considered invalid.
@@ -298,7 +326,9 @@ public:
     template<class T_out>
     void geocodeInterp(const T_grid& radar_grid,
             isce3::io::Raster& input_raster, isce3::io::Raster& output_raster,
-            isce3::io::Raster& dem_raster, bool flag_apply_rtc = false,
+            isce3::io::Raster& dem_raster,
+            double fill_value = std::numeric_limits<double>::quiet_NaN(),
+            bool flag_apply_rtc = false,
             bool flag_az_baseband_doppler = false, bool flatten = false,
             isce3::geometry::rtcInputTerrainRadiometry
                     input_terrain_radiometry = isce3::geometry::
@@ -325,6 +355,7 @@ public:
             const isce3::core::LUT2d<double>& slant_range_correction = {},
             isce3::io::Raster* input_rtc = nullptr,
             isce3::io::Raster* output_rtc = nullptr,
+            isce3::io::Raster* output_rtc_sigma = nullptr,
             isce3::io::Raster* input_layover_shadow_mask_raster = nullptr,
             isce3::product::SubSwaths* sub_swaths = nullptr,
             std::optional<bool> apply_valid_samples_sub_swath_masking = {},
@@ -366,7 +397,17 @@ public:
      * respectively.
      * @param[in]  dem_raster          Input DEM raster
      * @param[in]  geogrid_upsampling  Geogrid upsampling
-     * @param[in]  flag_upsample_radar_grid Double the radar grid sampling rate
+     * @param[in]  fill_value          Fill value. Defaults to NaN.
+     * The fill value will be cast to the GDAL data type of `output_raster` and
+     * `out_off_diag_terms` (when provided). If the output data type is
+     * integer and the fill value is NaN, the fill value will be stored as 0 in
+     * the output. If the output data type is complex (e.g., for off-diagonal
+     * terms) and the fill value is NaN, the fill value will be stored as
+     * NaN + NaN.j to match the NISAR specifications document. Otherwise,
+     * if the output data type is complex and the fill value is not NaN,
+     * the fill value will be used as the real part, with the imaginary part
+     * set to 0.
+     * * @param[in]  flag_upsample_radar_grid Double the radar grid sampling rate
      * @param[in]  flag_apply_rtc      Apply radiometric terrain correction
      * (RTC)
      * @param[in]  input_terrain_radiometry  Input terrain radiometry
@@ -422,6 +463,8 @@ public:
      * the `output_raster` (e.g., gamma0) to that of the `input_raster` (e.g.,
      * beta0). These values are only computed if `flag_apply_rtc` is `true`
      * and `input_rtc` is not provided.
+     * @param[out] output_rtc_sigma    Output RTC area factor to sigma-0
+     * (in slant-range geometry).
      * @param[in]  input_layover_shadow_mask_raster Input layover/shadow mask raster
      * (in radar geometry). Samples identified as SHADOW or LAYOVER_AND_SHADOW are
      * considered invalid.
@@ -443,6 +486,7 @@ public:
             isce3::io::Raster& input_raster, isce3::io::Raster& output_raster,
             isce3::io::Raster& dem_raster,
             double geogrid_upsampling = 1,
+            double fill_value = std::numeric_limits<double>::quiet_NaN(),
             bool flag_upsample_radar_grid = false,
             bool flag_apply_rtc = false,
             isce3::geometry::rtcInputTerrainRadiometry input_terrain_radiometry =
@@ -472,6 +516,7 @@ public:
             const isce3::core::LUT2d<double>& slant_range_correction = {},
             isce3::io::Raster* input_rtc = nullptr,
             isce3::io::Raster* output_rtc = nullptr,
+            isce3::io::Raster* output_rtc_sigma = nullptr,
             isce3::io::Raster* input_layover_shadow_mask_raster = nullptr,
             isce3::product::SubSwaths* sub_swaths = nullptr,
             std::optional<bool> apply_valid_samples_sub_swath_masking = std::nullopt,
@@ -630,7 +675,8 @@ private:
             int block_size_y, int block_size_with_upsampling_y, int block_y,
             int block_size_x, int block_size_with_upsampling_x, int block_x,
             long long& numdone, const long long& progress_block,
-            double geogrid_upsampling, int nbands, int nbands_off_diag_terms,
+            double geogrid_upsampling, double fill_value,
+            int nbands, int nbands_off_diag_terms,
             isce3::core::dataInterpMethod dem_interp_method,
             isce3::io::Raster& dem_raster,
             isce3::io::Raster* out_off_diag_terms,
@@ -638,7 +684,8 @@ private:
             isce3::io::Raster* out_geo_nlooks, isce3::io::Raster* out_geo_rtc,
             isce3::io::Raster* out_geo_rtc_gamma0_to_sigma0,
             isce3::core::ProjectionBase* proj, bool flag_apply_rtc,
-            bool flag_rtc_raster_is_in_memory, isce3::io::Raster* rtc_raster,
+            bool flag_rtc_raster_is_in_memory, bool flag_rtc_sigma0_raster_is_in_memory,
+            isce3::io::Raster* rtc_raster, isce3::io::Raster* rtc_sigma0_raster,
             const isce3::core::LUT2d<double>& az_time_correction,
             const isce3::core::LUT2d<double>& slant_range_correction,
             isce3::io::Raster& input_raster,
@@ -681,8 +728,7 @@ private:
      * @param[in] flatten flag to flatten the geocoded SLC
      * @param[in] phase_screen_raster Phase screen raster
      * @param[in] phase_screen_array  Phase screen array
-     * @param[in]  rtc_min_value_db    Minimum value for the RTC area factor.
-     * Radar data with RTC area factor below this limit will be set to NaN.
+     * @param[in] rtc_min_value       Minimum value for the RTC area factor.
      * @param[in] abs_cal_factor      Absolute calibration factor applied
      * to real-valued output datasets (assumed to be proportional to
      * power/intensity). If the output is complex valued, its considered

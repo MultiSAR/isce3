@@ -420,6 +420,11 @@ class GcovWriter(BaseL2WriterSingleInput):
 
     def __init__(self, runconfig, *args, **kwargs):
 
+        # store az. and rg. corrections (LUTs) that were used in the
+        # processing (if available)
+        self.timing_corrections_dict = kwargs.pop('timing_corrections_dict',
+                                                  None)
+
         super().__init__(runconfig, *args, **kwargs)
 
         self.input_freq_pols_dict = self.cfg['processing']['input_subset'][
@@ -456,6 +461,7 @@ class GcovWriter(BaseL2WriterSingleInput):
         self.populate_source_data()
         self.populate_processing_information_l2_common()
         self.populate_processing_information()
+        self.populate_processing_information_timing_corrections()
         self.populate_orbit()
         self.populate_orbit_gcov_specific()
         self.populate_attitude()
@@ -494,17 +500,65 @@ class GcovWriter(BaseL2WriterSingleInput):
         """
         Populate the data group `grids` of the GCOV product
         """
-        for frequency in self.freq_pols_dict.keys():
+        for frequency, pol_list in self.freq_pols_dict.items():
 
             input_swaths_freq_path = ('{PRODUCT}/swaths/'
                                       f'frequency{frequency}')
             output_grids_freq_path = ('{PRODUCT}/grids/'
-                                       f'frequency{frequency}')
+                                      f'frequency{frequency}')
 
             self.copy_from_input(
                 f'{output_grids_freq_path}/numberOfSubSwaths',
                 f'{input_swaths_freq_path}/numberOfSubSwaths',
                 skip_if_not_present=True)
+
+            output_grids_freq_full_path = (f'{self.output_product_path}'
+                                           f'/grids/frequency{frequency}')
+
+            for axis in ['xCoordinates', 'yCoordinates']:
+                axis_path = f'{output_grids_freq_full_path}/{axis}'
+                self.output_hdf5_obj[axis_path].attrs[
+                    "pixel_coordinate_convention"] = np.bytes_('center')
+
+            # Geocode the uint16 inputDataExceptionMask using
+            # 65535 (2**16 - 1) as the fill value.
+            self.geocode_lut(f'{output_grids_freq_path}',
+                             f'{input_swaths_freq_path}',
+                             output_ds_name_list=['inputDataExceptionMask'],
+                             frequency=frequency,
+                             skip_if_not_present=True,
+                             compute_stats=False,
+                             data_interpolator='nearest',
+                             fill_value=65535)
+
+            # copy 'inputDataExceptionMask' H5 dataset attributes
+            # `mask_valid_pixel_fraction_{pol}` and `raw_valid_pulse_fraction_{pol}`
+            input_ds = (f'{self.input_product_path}/swaths/frequency{frequency}/'
+                        'inputDataExceptionMask')
+            output_ds = (f'{self.output_product_path}/grids/frequency{frequency}/'
+                         'inputDataExceptionMask')
+
+            if (input_ds not in self.input_hdf5_obj or
+                    output_ds not in self.output_hdf5_obj):           
+                continue
+
+            warning_channel = journal.warning(
+                "GcovWriter.populate_data_parameters()")
+
+            for pol in pol_list:
+                for attr_name in [f'mask_valid_pixel_fraction_{pol.lower()}',
+                                  f'raw_valid_pulse_fraction_{pol.lower()}']:
+
+                    if attr_name not in self.input_hdf5_obj[input_ds].attrs:
+                        warning_channel.log(
+                            f'WARNING H5 attribute {attr_name} not found in'
+                            f' the input H5 dataset {input_ds}. Skipping'
+                            ' attribute.')
+                        continue
+
+                    dest_attr_name = attr_name.replace('mask', 'rslc')
+                    self.output_hdf5_obj[output_ds].attrs[dest_attr_name] = \
+                        self.input_hdf5_obj[input_ds].attrs[attr_name]
 
     def populate_processing_information(self):
         """
@@ -535,16 +589,6 @@ class GcovWriter(BaseL2WriterSingleInput):
             f'{parameters_group}/radiometricTerrainCorrectionApplied',
             'processing/geocode/apply_rtc')
 
-        # TODO: read these values from the RSLC metadata once they are
-        # available (the RSLC datasets below are not in the specs)
-        self.copy_from_input(
-            f'{parameters_group}/dryTroposphericGeolocationCorrectionApplied',
-            default=True)
-
-        self.copy_from_input(
-            f'{parameters_group}/wetTroposphericGeolocationCorrectionApplied',
-            default=False)
-
         self.copy_from_runconfig(
             f'{parameters_group}/rangeIonosphericGeolocationCorrectionApplied',
             'processing/geocode/apply_range_ionospheric_delay_correction')
@@ -571,9 +615,21 @@ class GcovWriter(BaseL2WriterSingleInput):
             f'{parameters_group}/shadowMaskingApplied',
             False)
 
-        self.copy_from_runconfig(
+        # Add geocoding algorithm reference
+        flag_symmetrized_runconfig = self.cfg['processing']['input_subset'][
+            'symmetrize_cross_pol_channels']
+
+        flag_has_hv_and_vh = any(
+            "HV" in pol_list and "VH" in pol_list
+            for pol_list in self.input_freq_pols_dict.values()
+        )
+
+        flag_symmetrized = (flag_symmetrized_runconfig and
+                            flag_has_hv_and_vh)
+
+        self.set_value(
             f'{parameters_group}/polarimetricSymmetrizationApplied',
-            'processing/input_subset/symmetrize_cross_pol_channels')
+            flag_symmetrized)
 
         # Populate algorithms parameters
 
@@ -608,7 +664,8 @@ class GcovWriter(BaseL2WriterSingleInput):
             'algorithm_type']
         if geocoding_algorithm == 'area_projection':
             geocoding_algorithm_name = ('Area-Based SAR Geocoding with'
-                                        ' Adaptive Multilooking (GEO-AP)')
+                                        ' Adaptive Multilooking (GEO-AP).'
+                                        ' DOI: 10.1109/TGRS.2022.3147472')
         else:
             geocoding_algorithm_name = geocoding_algorithm
 
@@ -622,7 +679,8 @@ class GcovWriter(BaseL2WriterSingleInput):
             'algorithm_type']
         if rtc_algorithm == 'area_projection':
             rtc_algorithm_name = ('Area-Based SAR Radiometric Terrain'
-                                  ' Correction (RTC-AP)')
+                                  ' Correction (RTC-AP).'
+                                  ' DOI: 10.1109/TGRS.2022.3147472')
         else:
             rtc_algorithm_name = rtc_algorithm
 
@@ -631,22 +689,14 @@ class GcovWriter(BaseL2WriterSingleInput):
             'radiometricTerrainCorrection',
             rtc_algorithm_name)
 
-        input_pol_list = list(self.input_freq_pols_dict.keys())
-        flag_hv_and_vh_in_pol_list = ['HV' in input_pol_list and
-                                      'VH' in input_pol_list]
-
-        flag_symmetrize = (flag_hv_and_vh_in_pol_list and
-                           self.cfg['processing']['input_subset'][
-                            'symmetrize_cross_pol_channels'])
-
         flag_full_covariance = self.cfg['processing']['input_subset'][
             'fullcovariance']
 
-        if flag_symmetrize and not flag_full_covariance:
+        if flag_symmetrized and not flag_full_covariance:
             symmetrization_algorithm = \
                 ('Cross-Polarimetric Channels HV and VH Backscatter Average'
                  ' (Incoherent Average)')
-        elif flag_symmetrize:
+        elif flag_symmetrized:
             symmetrization_algorithm = \
                 ('Cross-Polarimetric Channels HV and VH SLCs Average'
                  ' (Coherent Average)')
@@ -791,6 +841,46 @@ class GcovWriter(BaseL2WriterSingleInput):
         self.set_value(
             f'{parameters_group}/geo2rdr/deltaRange',
             1.0e-8)
+
+    def populate_processing_information_timing_corrections(self):
+        """
+        Populate the `processingInformation/timingCorrections` group of the
+        GCOV product
+        """
+
+        processing_information_geogrid = self.cfg['processing'][
+            'processing_information']['geogrid']
+
+        for frequency in self.input_freq_pols_dict.keys():
+
+            timing_corrections_group_path = \
+                (self.output_product_path +
+                 '/metadata/processingInformation/'
+                 f'timingCorrections/frequency{frequency}')
+
+            if (self.timing_corrections_dict is not None and
+                frequency in
+                    self.timing_corrections_dict['az_correction'].keys()):
+                az_correction_lut = \
+                    self.timing_corrections_dict['az_correction'][frequency]
+
+                self.geocode_isce3_lut(
+                    az_correction_lut, 'azimuthIonosphere',
+                    timing_corrections_group_path, frequency,
+                    processing_information_geogrid,
+                    data_interpolator='bilinear')
+
+            if (self.timing_corrections_dict is not None and
+                frequency in
+                    self.timing_corrections_dict['rg_correction'].keys()):
+                rg_correction_lut = \
+                    self.timing_corrections_dict['rg_correction'][frequency]
+
+                self.geocode_isce3_lut(
+                    rg_correction_lut, 'slantRangeIonosphere',
+                    timing_corrections_group_path, frequency,
+                    processing_information_geogrid,
+                    data_interpolator='bilinear')
 
     def populate_orbit_gcov_specific(self):
         """
